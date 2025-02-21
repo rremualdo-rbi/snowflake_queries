@@ -21,7 +21,7 @@ WITH RECENT_ORDERS AS
         ON 
             TP.PRODUCT_NUMBER = P.PRODUCT_NUMBER
     WHERE 
-            H.BUSINESS_DAY >= DATEADD(DAY, -1, CURRENT_DATE)
+            H.BUSINESS_DAY >= DATEADD(DAY, -90, CURRENT_DATE)
         AND H.COUNTRY_CODE = 'US'
         AND H.POS_VENDOR IN ('SICOM', 'NCR', 'SIMPHONY')
 ),
@@ -105,3 +105,129 @@ CLOSED_STORES AS
 ),
 
 -- Product number in brand_plk.dim.product not in brand_plk.dim.menu_item_recipe or vice versa.
+NOT_IN_MENU AS
+(
+    SELECT 
+        PRODUCT_NUMBER
+    FROM 
+        BRAND_PLK.DIM.PRODUCT
+    WHERE 
+        PRODUCT_NUMBER NOT IN 
+        (
+        SELECT DISTINCT PRODUCT_NUMBER FROM BRAND_PLK.DIM.MENU_ITEM_RECIPE
+        )
+
+),
+
+NOT_IN_PRODUCT AS
+(
+    SELECT 
+        PRODUCT_NUMBER
+    FROM 
+        BRAND_PLK.DIM.MENU_ITEM_RECIPE
+    WHERE 
+        PRODUCT_NUMBER NOT IN 
+        (
+        SELECT DISTINCT PRODUCT_NUMBER FROM BRAND_PLK.DIM.PRODUCT
+        )
+),
+
+NOT_IN_MENU_AND_PRODUCT AS
+(
+    SELECT 
+        R.STORE_ID,
+        R.POS_VENDOR,
+        R.SERVICE_MODE,
+        R.PRODUCT_PLU,
+        R.PRODUCT_NUMBER,
+        R.IS_PROTEIN,
+        'Product number in brand_plk.dim.product not in brand_plk.dim.menu_item_recipe or vice versa' AS ERROR_DESCRIPTION
+    FROM
+        RECENT_ORDERS R
+    INNER JOIN
+        NOT_IN_MENU M
+        ON 
+            R.PRODUCT_NUMBER = M.PRODUCT_NUMBER
+    INNER JOIN
+        NOT_IN_PRODUCT P
+        ON 
+            R.PRODUCT_NUMBER = P.PRODUCT_NUMBER
+),
+
+--No cost associated with a commodity number in brand_plk.costs.costs present in brand_plk.dim.menu_item_recipe.
+
+NULL_BRAND_ITEM_ID AS
+(
+    SELECT M.COMMODITY_NUMBER, M.PRODUCT_NUMBER
+    FROM BRAND_PLK.DIM.MENU_ITEM_RECIPE M
+    LEFT JOIN BRAND_PLK.COSTS.COSTS C
+        ON M.COMMODITY_NUMBER = C.BRAND_ITEM_ID
+    WHERE c.BRAND_ITEM_ID IS NULL
+),
+
+/*
+NO_COST_ASSOCIATED AS
+(
+    SELECT 
+        R.STORE_ID,
+        R.POS_VENDOR,
+        R.SERVICE_MODE,
+        R.PRODUCT_PLU,
+        R.PRODUCT_NUMBER,
+        R.IS_PROTEIN,
+        'No cost associated with a commodity number in brand_plk.costs.costs present in brand_plk.dim.menu_item_recipe' AS ERROR_DESCRIPTION
+    FROM
+        RECENT_ORDERS R
+    INNER JOIN
+        NULL_BRAND_ITEM_ID N
+        ON 
+            R.PRODUCT_NUMBER = N.PRODUCT_NUMBER        
+),
+*/
+
+-- Vendor mismatch between brand_plk.stores.stores and recent TLOG data
+VENDOR_MISMATCH AS
+(
+    SELECT 
+        R.STORE_ID,
+        R.POS_VENDOR,
+        R.SERVICE_MODE,
+        R.PRODUCT_PLU,
+        R.PRODUCT_NUMBER,
+        R.IS_PROTEIN,
+        'Vendor mismatch between brand_plk.stores.stores and recent TLOG data' AS ERROR_DESCRIPTION
+    FROM
+        RECENT_ORDERS R
+    LEFT JOIN
+        BRAND_PLK.STORES.STORES S
+        ON 
+            R.STORE_ID = S.STORE_ID
+    WHERE 
+        R.POS_VENDOR <> S.POS_VENDOR
+),
+
+-- Combine all errors
+ALL_ERRORS AS 
+(
+    SELECT * FROM MISSING_PRODUCTS
+    UNION ALL
+    SELECT * FROM MISSING_HIERARCHY
+    UNION ALL
+    SELECT * FROM PRODUCT_NAMES_DISCREPANCY
+    UNION ALL
+    SELECT * FROM CLOSED_STORES
+    UNION ALL
+    SELECT * FROM NOT_IN_MENU_AND_PRODUCT
+--    UNION ALL
+--    SELECT * FROM NO_COST_ASSOCIATED
+    UNION ALL
+    SELECT * FROM VENDOR_MISMATCH
+)
+
+SELECT 
+    *
+FROM
+    ALL_ERRORS
+WHERE
+    IS_PROTEIN = 1
+;
