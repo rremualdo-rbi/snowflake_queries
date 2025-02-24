@@ -160,15 +160,57 @@ NULL_BRAND_ITEM_ID AS
 (
     SELECT M.COMMODITY_NUMBER, M.PRODUCT_NUMBER
     FROM BRAND_PLK.DIM.MENU_ITEM_RECIPE M
-    LEFT JOIN BRAND_PLK.COSTS.COSTS C
+    LEFT JOIN 
+        (
+        BRAND_PLK.COSTS.COSTS C
+        )
         ON M.COMMODITY_NUMBER = C.BRAND_ITEM_ID
     WHERE c.BRAND_ITEM_ID IS NULL
 ),
 
-/*
+--No cost associated with a commodity number in brand_plk.costs.costs present in brand_plk.dim.menu_item_recipe
+
+MENU_COMMODITIES AS
+(
+    SELECT DISTINCT
+        PRODUCT_NUMBER,
+        COMMODITY_NUMBER
+    FROM 
+        BRAND_PLK.DIM.MENU_ITEM_RECIPE
+    WHERE 
+        COUNTRY_CODE = 'US'
+        AND 
+        MDM_PRODUCT_STATUS = 'Active'
+),
+LATEST_COSTS AS
+(
+    SELECT
+        STORE_ID,
+        CORPORATE_ITEM_ID,
+        AVERAGE_UNIT_PRICE
+    FROM
+        BRAND_PLK.COSTS.COSTS
+    WHERE 
+        CORPORATE_ITEM_ID IS NOT NULL
+    QUALIFY
+        ROW_NUMBER() OVER (PARTITION BY STORE_ID,CORPORATE_ITEM_ID ORDER BY DATE DESC) = 1
+),
+AVERAGE_UNIT_PRICE AS
+(
+    SELECT
+        C.STORE_ID,
+        M.PRODUCT_NUMBER,
+        M.COMMODITY_NUMBER,
+        C.AVERAGE_UNIT_PRICE
+    FROM 
+        LATEST_COSTS C
+    LEFT JOIN
+        MENU_COMMODITIES M
+        ON C.CORPORATE_ITEM_ID = M.COMMODITY_NUMBER 
+),
 NO_COST_ASSOCIATED AS
 (
-    SELECT 
+    SELECT DISTINCT
         R.STORE_ID,
         R.POS_VENDOR,
         R.SERVICE_MODE,
@@ -178,12 +220,14 @@ NO_COST_ASSOCIATED AS
         'No cost associated with a commodity number in brand_plk.costs.costs present in brand_plk.dim.menu_item_recipe' AS ERROR_DESCRIPTION
     FROM
         RECENT_ORDERS R
-    INNER JOIN
-        NULL_BRAND_ITEM_ID N
-        ON 
-            R.PRODUCT_NUMBER = N.PRODUCT_NUMBER        
-),
-*/
+    LEFT JOIN
+        AVERAGE_UNIT_PRICE A
+        ON
+            R.STORE_ID = A.STORE_ID
+        AND
+            R.PRODUCT_NUMBER = A.PRODUCT_NUMBER
+    WHERE A.AVERAGE_UNIT_PRICE IS NULL
+),        
 
 -- Vendor mismatch between brand_plk.stores.stores and recent TLOG data
 VENDOR_MISMATCH AS
@@ -218,16 +262,29 @@ ALL_ERRORS AS
     SELECT * FROM CLOSED_STORES
     UNION ALL
     SELECT * FROM NOT_IN_MENU_AND_PRODUCT
---    UNION ALL
---    SELECT * FROM NO_COST_ASSOCIATED
+    UNION ALL
+    SELECT * FROM NO_COST_ASSOCIATED
     UNION ALL
     SELECT * FROM VENDOR_MISMATCH
 )
-
+/*
 SELECT 
     *
 FROM
     ALL_ERRORS
 WHERE
     IS_PROTEIN = 1
+;
+*/
+SELECT
+    ERROR_DESCRIPTION,
+    COUNT(*) AS N
+FROM
+    ALL_ERRORS
+WHERE
+    IS_PROTEIN = 1
+GROUP BY 
+    ERROR_DESCRIPTION
+ORDER BY
+    N DESC
 ;
