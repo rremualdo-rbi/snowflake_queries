@@ -286,13 +286,15 @@ VENDOR_MISMATCH AS
         R.IS_PROTEIN,
         'Vendor mismatch between brand_plk.stores.stores and recent TLOG data' AS ERROR_DESCRIPTION
     FROM
-        RECENT_ORDERS R
+        RECENT_ORDERS_WITH_BUSINESS_DAY R
     LEFT JOIN
         BRAND_PLK.STORES.STORES S
         ON 
             R.STORE_ID = S.STORE_ID
     WHERE 
             R.POS_VENDOR <> S.POS_VENDOR
+    AND 
+            R.BUSINESS_DAY > TO_DATE(S.UPDATE_TIME)
 ),
 
 -- Null product_number and product_plu in TLOG
